@@ -196,8 +196,8 @@ async def get_scheduler_address(
 async def wait_for_scheduler(api, cluster_name, namespace, timeout=None):
     pod_start_time = None
     while True:
-        pod = await Pod.objects(api, namespace=namespace).get_by_name(
-            cluster_name + "-scheduler"
+        pod = await Pod.objects(api, namespace=namespace).get(
+            **{"selector" : {"dask.org/component":"scheduler-deployment"}}
         )
         phase = pod.obj["status"]["phase"]
         if phase == "Running":

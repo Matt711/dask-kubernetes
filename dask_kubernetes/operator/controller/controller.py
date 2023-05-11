@@ -60,19 +60,20 @@ def _get_labels(meta):
     }
 
 
-def build_scheduler_pod_spec(cluster_name, spec, annotations, labels):
+def build_scheduler_deployment_spec(cluster_name, spec, annotations, labels):
     labels.update(
         **{
             "dask.org/cluster-name": cluster_name,
-            "dask.org/component": "scheduler",
+            "dask.org/component": "scheduler-deployment",
             "sidecar.istio.io/inject": "false",
         }
     )
+    spec["replicas"]=1
     return {
         "apiVersion": "v1",
-        "kind": "Pod",
+        "kind": "Deployment",
         "metadata": {
-            "name": f"{cluster_name}-scheduler",
+            "name": f"{cluster_name}-scheduler-deployment",
             "labels": labels,
             "annotations": annotations,
         },
@@ -271,13 +272,40 @@ async def daskcluster_create_components(
                 annotations.update(**scheduler_spec["metadata"]["annotations"])
             if "labels" in scheduler_spec["metadata"]:
                 labels.update(**scheduler_spec["metadata"]["labels"])
-        data = build_scheduler_pod_spec(
+        data = build_scheduler_deployment_spec(
             name, scheduler_spec.get("spec"), annotations, labels
         )
         kopf.adopt(data)
-        await api.create_namespaced_pod(
+        body_metadata = kubernetes.client.V1ObjectMeta(
+            name = data["metadata"]["name"],
+            labels = data["metadata"]["labels"],
+            annotations = data["metadata"]["annotations"],
+        )
+        container = kubernetes.client.V1Container(
+            name=data["metadata"]["name"],
+            image="ghcr.io/dask/dask:latest",
+            args=["dask-scheduler"],
+        )
+                    #         metadata=kubernetes.client.V1ObjectMeta(
+                    #     name="foo-scheduler",
+                    # ),
+        body_spec = kubernetes.client.V1DeploymentSpec(
+            replicas = data["spec"]["replicas"],
+            selector = kubernetes.client.V1LabelSelector(match_labels=data["metadata"]["labels"]),
+            template = kubernetes.client.V1PodTemplateSpec(
+                metadata = body_metadata,
+                spec = kubernetes.client.V1PodSpec(
+                    containers=[container],
+                )
+            ),
+        )
+        body = kubernetes.client.V1Deployment(
+            metadata=body_metadata,
+            spec=body_spec,
+        )
+        await kubernetes.client.AppsV1Api(api_client).create_namespaced_deployment(
             namespace=namespace,
-            body=data,
+            body=body,
         )
         logger.info(f"Scheduler pod {data['metadata']['name']} created in {namespace}.")
 
